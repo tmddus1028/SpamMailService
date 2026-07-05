@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>메일 검역소 — 스팸 판독기</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  :root{
+    --ink: #1B2430;
+    --ink-soft: #262F3D;
+    --paper: #F5F0E6;
+    --paper-line: #E4DCC8;
+    --muted: #8B93A1;
+    --stamp-red: #C1443C;
+    --stamp-red-dark: #97302A;
+    --safe-green: #3F7A5C;
+    --safe-green-dark: #2C5A43;
+    --gold: #C9A227;
+  }
+
+  *{ box-sizing:border-box; }
+
+  body{
+    margin:0;
+    background:
+      radial-gradient(ellipse at top left, #232D3B 0%, var(--ink) 55%);
+    color: var(--paper);
+    font-family:'IBM Plex Sans KR', sans-serif;
+    min-height:100vh;
+    padding: 48px 20px 80px;
+  }
+
+  .wrap{ max-width: 760px; margin: 0 auto; }
+
+  /* ---- Header ---- */
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    letter-spacing:.18em;
+    color: var(--gold);
+    text-transform:uppercase;
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin-bottom:14px;
+  }
+  .eyebrow::before{
+    content:"";
+    width:26px; height:1px;
+    background: var(--gold);
+    display:inline-block;
+  }
+  h1{
+    font-family:'Fraunces', serif;
+    font-weight:600;
+    font-size: clamp(32px, 5vw, 46px);
+    line-height:1.15;
+    margin: 0 0 12px;
+    letter-spacing:-.01em;
+  }
+  .sub{
+    color: var(--muted);
+    font-size:15px;
+    line-height:1.6;
+    max-width: 520px;
+    margin-bottom: 40px;
+  }
+
+  /* ---- Letter card ---- */
+  .letter-stage{
+    position:relative;
+    margin-bottom: 28px;
+  }
+  .letter{
+    position:relative;
+    background: var(--paper);
+    color: #2A2118;
+    border-radius: 3px;
+    padding: 30px 28px 26px;
+    box-shadow:
+      0 1px 0 rgba(255,255,255,.5) inset,
+      0 24px 48px -20px rgba(0,0,0,.55);
+    background-image:
+      repeating-linear-gradient(transparent, transparent 27px, var(--paper-line) 28px);
+    overflow:hidden;
+  }
+  .letter::before{
+    /* perforated top edge */
+    content:"";
+    position:absolute; top:0; left:0; right:0; height:10px;
+    background-image: radial-gradient(circle at 10px 0, transparent 4px, var(--ink) 4.5px);
+    background-size: 20px 10px;
+    background-repeat: repeat-x;
+    background-position: 0 -5px;
+  }
+  .letter-head{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    color:#8A7F6C;
+    letter-spacing:.05em;
+    margin-bottom: 16px;
+    padding-bottom:12px;
+    border-bottom: 1px dashed #C9BE9F;
+  }
+  textarea{
+    width:100%;
+    min-height: 210px;
+    border:none;
+    outline:none;
+    resize: vertical;
+    background: transparent;
+    font-family:'IBM Plex Sans KR', sans-serif;
+    font-size:15.5px;
+    line-height: 28px;
+    color:#2A2118;
+    padding:0;
+  }
+  textarea::placeholder{ color:#B0A489; }
+
+  /* stamp mark, appears after analysis */
+  .stamp{
+    position:absolute;
+    top: 26px; right: 30px;
+    font-family:'Fraunces', serif;
+    font-weight:700;
+    font-size: 30px;
+    letter-spacing:.06em;
+    padding: 10px 18px;
+    border: 3.5px solid currentColor;
+    border-radius: 8px;
+    transform: rotate(-11deg) scale(0);
+    opacity:0;
+    pointer-events:none;
+    text-transform:uppercase;
+    mix-blend-mode: multiply;
+    transition: transform .1s, opacity .1s;
+  }
+  .stamp::after{
+    content:"";
+    position:absolute; inset:-4px;
+    border:1.5px solid currentColor;
+    border-radius: 10px;
+    opacity:.55;
+  }
+  .stamp.show{
+    animation: stampDown .55s cubic-bezier(.2,1.4,.4,1) forwards;
+  }
+  @keyframes stampDown{
+    0%{ transform: rotate(-11deg) scale(2.6); opacity:0; }
+    55%{ transform: rotate(-11deg) scale(0.92); opacity:1; }
+    75%{ transform: rotate(-11deg) scale(1.06); }
+    100%{ transform: rotate(-11deg) scale(1); opacity:1; }
+  }
+  .stamp.spam{ color: var(--stamp-red); }
+  .stamp.ham{ color: var(--safe-green); }
+
+  /* ---- Controls ---- */
+  .controls{
+    display:flex;
+    gap:12px;
+    align-items:center;
+    margin-bottom: 40px;
+    flex-wrap:wrap;
+  }
+  button.analyze{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:13px;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    background: var(--gold);
+    color: #211A08;
+    border:none;
+    padding: 14px 26px;
+    border-radius: 3px;
+    cursor:pointer;
+    font-weight:500;
+    transition: transform .15s, box-shadow .15s;
+    box-shadow: 0 4px 0 #8C7318;
+  }
+  button.analyze:hover{ transform: translateY(-1px); }
+  button.analyze:active{ transform: translateY(3px); box-shadow: 0 1px 0 #8C7318; }
+  button.analyze:disabled{ opacity:.4; cursor:not-allowed; transform:none; box-shadow: 0 4px 0 #8C7318;}
+
+  button.clear{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    background: transparent;
+    border: 1px solid #3A4453;
+    color: var(--muted);
+    padding: 13px 18px;
+    border-radius: 3px;
+    cursor:pointer;
+  }
+  button.clear:hover{ border-color: var(--muted); color: var(--paper); }
+
+  .sample-note{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    color: var(--muted);
+  }
+  .sample-note a{ color: var(--gold); cursor:pointer; text-decoration:underline; }
+
+  /* ---- Verdict readout ---- */
+  .readout{
+    display:none;
+  }
+  .readout.active{ display:block; }
+
+  .verdict-row{
+    display:flex;
+    align-items:center;
+    gap:18px;
+    padding: 22px 24px;
+    border-radius: 4px;
+    border:1px solid var(--ink-soft);
+    background: var(--ink-soft);
+    margin-bottom: 20px;
+  }
+  .verdict-badge{
+    font-family:'Fraunces', serif;
+    font-weight:700;
+    font-size: 22px;
+    padding: 8px 16px;
+    border-radius: 3px;
+    white-space:nowrap;
+  }
+  .verdict-badge.spam{ background: rgba(193,68,60,.18); color:#E8837C; border:1px solid rgba(193,68,60,.4);}
+  .verdict-badge.ham{ background: rgba(63,122,92,.18); color:#7FC7A2; border:1px solid rgba(63,122,92,.4);}
+
+  .verdict-text{ flex:1; }
+  .verdict-text .label{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    color: var(--muted);
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    margin-bottom:4px;
+  }
+  .verdict-text .score{
+    font-family:'IBM Plex Mono', monospace;
+    font-size: 26px;
+    color: var(--paper);
+  }
+  .verdict-text .score span{ font-size:14px; color:var(--muted); }
+
+  .meter{
+    height: 6px;
+    border-radius: 3px;
+    background:#0F141C;
+    overflow:hidden;
+    margin-top: 22px;
+    position:relative;
+  }
+  .meter-fill{
+    height:100%;
+    width:0%;
+    border-radius:3px;
+    transition: width .7s cubic-bezier(.3,.8,.3,1);
+  }
+  .meter-fill.spam{ background: linear-gradient(90deg, var(--stamp-red-dark), var(--stamp-red)); }
+  .meter-fill.ham{ background: linear-gradient(90deg, var(--safe-green-dark), var(--safe-green)); }
+  .meter-labels{
+    display:flex; justify-content:space-between;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:10px;
+    color: var(--muted);
+    margin-top:6px;
+    letter-spacing:.05em;
+  }
+
+  /* signals */
+  .signals-title{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color: var(--muted);
+    margin: 32px 0 14px;
+  }
+  .signal-list{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+  }
+  .chip{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    padding: 7px 12px;
+    border-radius: 20px;
+    border:1px solid;
+    display:flex;
+    align-items:center;
+    gap:7px;
+  }
+  .chip.risk{ border-color: rgba(193,68,60,.5); color:#E8837C; background: rgba(193,68,60,.08); }
+  .chip.safe{ border-color: rgba(63,122,92,.5); color:#7FC7A2; background: rgba(63,122,92,.08); }
+  .chip .w{ opacity:.65; font-size:10px; }
+  .no-signal{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    color: var(--muted);
+  }
+
+  /* ---- Gaussian feature table ---- */
+  .model-note{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11.5px;
+    color: var(--muted);
+    line-height:1.7;
+    margin-bottom:18px;
+    padding: 12px 14px;
+    border-left: 2px solid var(--gold);
+    background: rgba(201,162,39,.06);
+  }
+  .feat-table{
+    width:100%;
+    border-collapse: collapse;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+  }
+  .feat-table th{
+    text-align:left;
+    color: var(--muted);
+    font-weight:500;
+    font-size:10.5px;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    padding: 8px 10px;
+    border-bottom: 1px solid #2B3546;
+  }
+  .feat-table td{
+    padding: 10px 10px;
+    border-bottom: 1px solid #232C39;
+    color: var(--paper);
+    vertical-align:middle;
+  }
+  .feat-table tr:last-child td{ border-bottom:none; }
+  .feat-table .fname{ color:#C7CDD8; }
+  .feat-table .fval{ font-weight:600; }
+  .feat-table .fdist{ color: var(--muted); font-size:11px; }
+  .lean-bar{
+    width:100%;
+    max-width:120px;
+    height:5px;
+    border-radius:3px;
+    background:#0F141C;
+    position:relative;
+    overflow:hidden;
+  }
+  .lean-bar i{
+    position:absolute; top:0; bottom:0;
+    width:2px;
+    background: var(--paper);
+    opacity:.5;
+  }
+  .lean-bar b{
+    display:block;
+    height:100%;
+    border-radius:3px;
+  }
+  .lean-bar b.spam{ background: var(--stamp-red); }
+  .lean-bar b.ham{ background: var(--safe-green); }
+  .formula-row{
+    margin-top:22px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    color: var(--muted);
+    background:#141B25;
+    border-radius:4px;
+    padding: 14px 16px;
+    line-height:1.8;
+    overflow-x:auto;
+  }
+  .formula-row b{ color: var(--paper); }
+  .formula-row .spamv{ color:#E8837C; }
+  .formula-row .hamv{ color:#7FC7A2; }
+
+  footer{
+    margin-top: 48px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    color: #4B5566;
+    line-height:1.7;
+    border-top:1px solid #2B3546;
+    padding-top:18px;
+  }
+
+  @media (max-width:520px){
+    .stamp{ font-size:20px; padding:7px 12px; right:16px; top:16px; }
+    .letter{ padding:24px 18px 20px; }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="eyebrow">Mail Quarantine Station</div>
+    <h1>메일 검역소</h1>
+    <p class="sub">받은 메일 내용을 붙여넣으면, <b style="color:var(--paper)">가우시안 나이브 베이즈(Gaussian Naive Bayes)</b> 모델이 학습 데이터의 통계 분포와 비교해 스팸 여부에 도장을 찍어 드립니다. 특징별 평균·분산과 계산 과정도 그대로 공개해요.</p>
+
+    <div class="letter-stage">
+      <div class="letter">
+        <div class="letter-head">
+          <span>FROM: 알 수 없음</span>
+          <span>NO. 0000-KR</span>
+        </div>
+        <textarea id="mailInput" placeholder="여기에 메일 본문을 붙여넣으세요...&#10;&#10;예) 축하합니다! 고객님은 1등에 당첨되셨습니다. 지금 바로 링크를 클릭하여 100% 무료로 상품을 수령하세요!!!"></textarea>
+        <div class="stamp" id="stampMark">SPAM</div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="analyze" id="analyzeBtn">검역 시작 →</button>
+      <button class="clear" id="clearBtn">지우기</button>
+      <span class="sample-note">막막하면 <a id="sampleSpam">스팸 예시</a> · <a id="sampleHam">정상 예시</a> 넣어보기</span>
+    </div>
+
+    <div class="readout" id="readout">
+      <div class="verdict-row">
+        <div class="verdict-badge" id="badge">SPAM</div>
+        <div class="verdict-text">
+          <div class="label">판정 신뢰도</div>
+          <div class="score" id="scoreText">0<span>%</span></div>
+        </div>
+      </div>
+      <div class="model-note" id="reliabilityNote" style="display:none; margin-top:-8px;">⚠ 본문이 짧아서 비율 기반 특징이 불안정할 수 있어요. 참고용으로만 봐주세요.</div>
+      <div class="meter"><div class="meter-fill" id="meterFill"></div></div>
+      <div class="meter-labels"><span>정상 (HAM)</span><span>스팸 (SPAM)</span></div>
+
+      <div class="model-note" id="modelNote">학습셋: 스팸 20건 / 정상 20건에서 뽑은 7개 특징의 평균·표준편차로 정규분포(가우시안)를 각각 추정했습니다.</div>
+
+      <div class="signals-title">특징 벡터 (Feature Vector) 분석</div>
+      <table class="feat-table">
+        <thead>
+          <tr><th>특징</th><th>이 메일</th><th>분포 (스팸 μ±σ / 정상 μ±σ)</th><th>우세</th></tr>
+        </thead>
+        <tbody id="featTableBody"></tbody>
+      </table>
+
+      <div class="formula-row" id="formulaRow"></div>
+    </div>
+
+    <footer>
+      본 판독은 브라우저 안에 내장된 스팸 20건 · 정상 20건짜리 소규모 학습셋으로 훈련한 가우시안 나이브 베이즈 모델이며, 실제 스팸 필터와 100% 일치하지 않을 수 있습니다.<br>
+      개인정보·금융정보 요청 메일은 결과와 무관하게 항상 주의하세요.
+    </footer>
+  </div>
+
+<script>
+(function(){
+  /* =========================================================
+     1) 스팸 어휘 사전 — 특징(feature) #4 계산에만 사용
+     ========================================================= */
+  const SPAM_LEXICON = [
+    "무료","당첨","대출","카지노","비아그라","viagra","클릭","긴급","계좌","환급",
+    "선착순","마감\\s*임박","무이자","이벤트","상품권","송금","도박","베팅","비트코인",
+    "투자\\s*수익","주식\\s*급등","congratulations","winner","lottery","free money",
+    "act now","urgent","wire transfer","verify your account","limited time",
+    "work from home","make money fast","guarantee","subscribe now","100%"
+  ];
+
+  /* =========================================================
+     2) 학습 데이터셋 (스팸 20건 / 정상 20건, 브라우저에 내장)
+     ========================================================= */
+  const SPAM_TRAIN = [
+    "축하합니다! 고객님은 1등에 당첨되셨습니다!!! 지금 바로 클릭하여 무료 상품을 수령하세요! http://claim-prize.example.com",
+    "긴급: 고객님의 계좌가 잠정 정지되었습니다. 즉시 비밀번호를 확인하고 계좌 정보를 입력해주세요!! http://verify-account.example.net",
+    "무이자 대출 상담 100% 승인! 신용 등급 상관없이 지금 바로 신청하세요. 선착순 마감 임박!!!",
+    "CONGRATULATIONS! You've WON a $1,000,000 prize! Click here now to claim your free money!!! http://bigwin-lottery.example.com",
+    "카지노 첫 입금 200% 보너스 이벤트! 지금 가입하고 베팅 무료 크레딧 받아가세요! www.luckycasino.example",
+    "비아그라 최저가 할인 이벤트! 지금 주문하면 무료 배송! 100% 정품 보장 www.pharmacy-deal.example",
+    "URGENT: Your bank account will be suspended. Verify your account immediately to avoid wire transfer issues! http://secure-bank-verify.example",
+    "세금 환급 대상자로 선정되셨습니다! 계좌 이체를 위해 개인정보를 입력해주세요. 마감 임박!!!",
+    "work from home and make money fast! No experience needed, guarantee $500/day! act now, limited time offer!",
+    "주식 급등 종목 무료 리딩방! 지금 바로 클릭하여 투자 수익 200% 확인하세요!!! http://stockpick.example",
+    "당신의 상속 재산 처리를 위해 긴급 연락 바랍니다. 송금 절차를 안내해드리겠습니다.",
+    "비트코인 투자로 하루 100만원! 무료 상담 신청하고 지금 바로 시작하세요! www.crypto-rich.example",
+    "선착순 100명 무료 상품권 증정 이벤트!! 지금 바로 클릭!! http://free-giftcard.example",
+    "WINNER! Your email has been selected for a free iPhone! Click below to claim now!!! www.claim-now.example",
+    "대출 이자 없이 즉시 대출 가능! 신용 등급 무관, 당일 입금! 지금 바로 상담 신청하세요!!!",
+    "계정이 곧 잠깁니다. 지금 비밀번호를 변경하지 않으면 서비스 이용이 제한됩니다. 아래 링크를 클릭하세요. http://account-lock.example",
+    "100% FREE trial! No cost, no risk! Subscribe now and get guaranteed results!!! www.freetrial-offer.example",
+    "다이어트약 몸짱 이벤트! 90% 할인!! 지금 클릭하고 무료 체험하세요! http://diet-deal.example",
+    "도박 사이트 첫 충전 300% 지급! 지금 가입하면 무료 베팅 크레딧 증정!! www.betwin.example",
+    "긴급 공지: 상품권 100만원 당첨자로 선정되었습니다. 계좌 정보를 즉시 입력해주세요!!! http://giftcard-win.example"
+  ];
+
+  const HAM_TRAIN = [
+    "안녕하세요 팀장님, 다음 주 화요일 오후 2시 프로젝트 진행 회의 일정 공유드립니다. 첨부 파일로 지난주 보고서 첨부드리니 확인 부탁드립니다. 감사합니다.",
+    "Hi team, please find attached the meeting notes from yesterday's discussion. Let me know if I missed anything. Regards, Minsu",
+    "안녕하세요, 이번 분기 예산 보고서 초안을 첨부합니다. 검토 후 피드백 부탁드립니다. 감사합니다.",
+    "Hi John, as discussed, I've updated the project timeline. Please review the attached document and let me know your thoughts.",
+    "다음 주 회의 일정을 변경하고자 합니다. 목요일 오전 10시 가능하신지 회신 부탁드립니다.",
+    "Hello, I hope you're doing well. Attached is the invoice number 4821 for last month's services. Please confirm receipt.",
+    "팀원 여러분, 이번 주 스프린트 회고 회의는 금요일 오후 3시에 진행됩니다. 참석 부탁드립니다.",
+    "Dear Professor Kim, I've attached my assignment for this week. Please let me know if you have any questions.",
+    "안녕하세요 고객님, 요청하신 견적서를 첨부파일로 보내드립니다. 검토 부탁드리며 문의사항 있으시면 연락 주세요.",
+    "Hi Sarah, thanks for the update on the design review. I'll follow up with the team and send feedback by Friday.",
+    "이번 워크숍 참가 신청서를 첨부드립니다. 마감일은 다음 주 월요일입니다. 확인 부탁드립니다.",
+    "Hi everyone, just a reminder that our weekly standup meeting is at 9 AM tomorrow. See you there.",
+    "안녕하세요, 지난번 문의주신 계약서 초안을 첨부합니다. 수정 사항 있으시면 알려주세요.",
+    "Dear team, please find the quarterly report attached. Let's discuss the results in our next meeting.",
+    "회의록 공유드립니다. 다음 액션 아이템은 첨부 파일을 참고해주세요. 감사합니다.",
+    "Hi, I wanted to follow up on the proposal we discussed last week. Do you have any updates?",
+    "안녕하세요 부장님, 출장 보고서 작성하여 첨부드립니다. 확인 부탁드립니다.",
+    "Hello, attaching the revised contract for your review. Please sign and return at your earliest convenience.",
+    "팀 회의 결과 공유드립니다. 다음 주까지 각자 담당 업무를 완료해주시기 바랍니다.",
+    "Hi team, the client meeting has been rescheduled to next Wednesday. Please update your calendars accordingly."
+  ];
+
+  const FEATURE_NAMES = ['느낌표 개수','URL 개수','영문 대문자 비율(%)','스팸 어휘 비율(%)','평균 단어 길이','숫자 문자 비율(%)','금액 표기 개수'];
+
+  /* =========================================================
+     3) 텍스트 → 숫자 특징 벡터(feature vector) 변환
+     ========================================================= */
+  function extractFeatures(text){
+    const words = text.trim().split(/\s+/).filter(Boolean);
+    const totalWords = words.length || 1;
+
+    const exclaim = (text.match(/!/g) || []).length;
+    const urlCount = (text.match(/https?:\/\/|www\./gi) || []).length;
+
+    const letters = text.match(/[A-Za-z]/g) || [];
+    const capsLetters = text.match(/[A-Z]/g) || [];
+    const capsRatio = (capsLetters.length / (letters.length + 10)) * 100;
+
+    let spamHits = 0;
+    SPAM_LEXICON.forEach(p => {
+      const re = new RegExp(p, 'gi');
+      const m = text.match(re);
+      if(m) spamHits += m.length;
+    });
+    const spamWordRatio = (spamHits / (totalWords + 5)) * 100;
+
+    const wordLens = words.map(w => w.replace(/[^\p{L}\p{N}]/gu, '').length).filter(l => l > 0);
+    const avgWordLen = wordLens.length ? wordLens.reduce((a,b)=>a+b,0) / wordLens.length : 0;
+
+    const digits = (text.match(/[0-9]/g) || []).length;
+    const digitRatio = (digits / (text.length + 20)) * 100;
+
+    const currencyCount = (text.match(/[₩$€]\s?[0-9,]{2,}/g) || []).length;
+
+    return [exclaim, urlCount, capsRatio, spamWordRatio, avgWordLen, digitRatio, currencyCount];
+  }
+
+  /* =========================================================
+     4) 가우시안 나이브 베이즈 학습: 클래스별 평균(μ)·분산(σ²)
+     ========================================================= */
+  function mean(arr){ return arr.reduce((a,b)=>a+b,0) / arr.length; }
+  function variance(arr, m){ return arr.reduce((a,b)=>a + (b-m)*(b-m), 0) / arr.length; }
+
+  function trainClass(texts, combinedVar){
+    const vectors = texts.map(extractFeatures);
+    const nFeat = vectors[0].length;
+    const means = [], vars = [];
+    for(let i=0; i<nFeat; i++){
+      const col = vectors.map(v => v[i]);
+      const m = mean(col);
+      const rawVar = variance(col, m);
+      const floor = Math.max(0.35 * combinedVar[i], 0.05); // 전체 분산의 35% 또는 최소치 중 큰 값
+      vars.push(Math.max(rawVar, floor));
+      means.push(m);
+    }
+    return { means, vars, n: texts.length };
+  }
+
+  const _spamVecs = SPAM_TRAIN.map(extractFeatures);
+  const _hamVecs  = HAM_TRAIN.map(extractFeatures);
+  const _nFeat = _spamVecs[0].length;
+  const _combinedVar = [];
+  for(let i=0; i<_nFeat; i++){
+    const col = _spamVecs.concat(_hamVecs).map(v => v[i]);
+    const m = mean(col);
+    _combinedVar.push(variance(col, m));
+  }
+
+  const spamModel = trainClass(SPAM_TRAIN, _combinedVar);
+  const hamModel  = trainClass(HAM_TRAIN, _combinedVar);
+  const totalN = spamModel.n + hamModel.n;
+  const priorSpam = spamModel.n / totalN;
+  const priorHam  = hamModel.n / totalN;
+
+  function gaussianLogPdf(x, m, v){
+    return -0.5 * Math.log(2 * Math.PI * v) - ((x - m) * (x - m)) / (2 * v);
+  }
+
+  /* =========================================================
+     5) 예측: 새 메일의 특징 벡터를 두 정규분포와 비교
+     ========================================================= */
+  function predict(text){
+    const x = extractFeatures(text);
+
+    let logSpam = Math.log(priorSpam);
+    let logHam  = Math.log(priorHam);
+    const perFeature = [];
+
+    for(let i=0; i<x.length; i++){
+      const lpS = gaussianLogPdf(x[i], spamModel.means[i], spamModel.vars[i]);
+      const lpH = gaussianLogPdf(x[i], hamModel.means[i], hamModel.vars[i]);
+      logSpam += lpS;
+      logHam  += lpH;
+      perFeature.push({ name: FEATURE_NAMES[i], value: x[i], lpS, lpH,
+        spamMean: spamModel.means[i], spamVar: spamModel.vars[i],
+        hamMean: hamModel.means[i], hamVar: hamModel.vars[i] });
+    }
+
+    const maxLog = Math.max(logSpam, logHam);
+    const eSpam = Math.exp(logSpam - maxLog);
+    const eHam  = Math.exp(logHam - maxLog);
+    const probSpam = eSpam / (eSpam + eHam);
+
+    return { probSpam, logSpam, logHam, perFeature };
+  }
+
+  /* =========================================================
+     6) 화면 렌더링
+     ========================================================= */
+  const el = id => document.getElementById(id);
+  const input = el('mailInput');
+  const analyzeBtn = el('analyzeBtn');
+  const clearBtn = el('clearBtn');
+  const stampMark = el('stampMark');
+  const readout = el('readout');
+  const badge = el('badge');
+  const scoreText = el('scoreText');
+  const meterFill = el('meterFill');
+  const featTableBody = el('featTableBody');
+  const formulaRow = el('formulaRow');
+
+  const SPAM_SAMPLE = `[긴급] 고객님께서는 1등 상품에 당첨되셨습니다!!!\n지금 바로 아래 링크를 클릭하여 100% 무료로 상품을 수령하세요.\n선착순 마감 임박! 계좌 정보를 입력하시면 즉시 환급해 드립니다.\nhttp://free-prize-claim.example.com`;
+  const HAM_SAMPLE = `안녕하세요 팀장님,\n다음 주 화요일 오후 2시 프로젝트 진행 회의 일정 공유드립니다.\n첨부 파일로 지난주 보고서 첨부드리니 확인 부탁드립니다.\n감사합니다.\n- 김민수 드림`;
+
+  el('sampleSpam').addEventListener('click', ()=>{ input.value = SPAM_SAMPLE; resetReadout(); });
+  el('sampleHam').addEventListener('click', ()=>{ input.value = HAM_SAMPLE; resetReadout(); });
+
+  clearBtn.addEventListener('click', ()=>{
+    input.value = '';
+    resetReadout();
+    input.focus();
+  });
+
+  function resetReadout(){
+    readout.classList.remove('active');
+    stampMark.classList.remove('show','spam','ham');
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function fmt(n, d=2){ return Number(n).toFixed(d); }
+
+  function render(result, rawText){
+    const pct = Math.round(result.probSpam * 100);
+    const isSpam = result.probSpam >= 0.5;
+
+    readout.classList.add('active');
+
+    const reliabilityNote = el('reliabilityNote');
+    if(rawText.trim().length < 40){
+      reliabilityNote.style.display = 'block';
+    } else {
+      reliabilityNote.style.display = 'none';
+    }
+
+    badge.textContent = isSpam ? 'SPAM 위험' : 'HAM 정상';
+    badge.className = 'verdict-badge ' + (isSpam ? 'spam' : 'ham');
+
+    scoreText.innerHTML = (isSpam ? pct : (100-pct)) + '<span>% ' + (isSpam ? '스팸 확률' : '정상 확률') + '</span>';
+
+    meterFill.className = 'meter-fill ' + (isSpam ? 'spam' : 'ham');
+    requestAnimationFrame(()=>{ meterFill.style.width = pct + '%'; });
+
+    stampMark.textContent = isSpam ? 'SPAM' : '정상';
+    stampMark.className = 'stamp ' + (isSpam ? 'spam' : 'ham');
+    void stampMark.offsetWidth;
+    stampMark.classList.add('show');
+
+    // 특징 벡터 테이블
+    featTableBody.innerHTML = '';
+    result.perFeature.forEach(f => {
+      const leanSpam = f.lpS > f.lpH; // 이 특징 하나만 봤을 때 어느 분포에 더 가까운지
+      const diff = f.lpS - f.lpH;
+      const leanStrength = 1 / (1 + Math.exp(-diff * 0.6)); // 0~1, 스팸 쪽으로 얼마나 기우는지
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="fname">${escapeHtml(f.name)}</td>
+        <td class="fval">${fmt(f.value, f.value % 1 === 0 ? 0 : 1)}</td>
+        <td class="fdist">
+          <span class="spamv" style="color:#E8837C">${fmt(f.spamMean,1)}±${fmt(Math.sqrt(f.spamVar),1)}</span> /
+          <span class="hamv" style="color:#7FC7A2">${fmt(f.hamMean,1)}±${fmt(Math.sqrt(f.hamVar),1)}</span>
+        </td>
+        <td>
+          <div class="lean-bar">
+            <b class="${leanSpam ? 'spam' : 'ham'}" style="width:${Math.round((leanSpam ? leanStrength : 1-leanStrength)*100)}%"></b>
+          </div>
+        </td>`;
+      featTableBody.appendChild(tr);
+    });
+
+    // 최종 계산식 공개
+    formulaRow.innerHTML =
+      `log P(스팸) + Σ log N(xᵢ; μ_스팸, σ²_스팸) = <span class="spamv">${fmt(result.logSpam,2)}</span><br>` +
+      `log P(정상) + Σ log N(xᵢ; μ_정상, σ²_정상) = <span class="hamv">${fmt(result.logHam,2)}</span><br>` +
+      `→ 두 로그값을 정규화(softmax)하면 <b>스팸 확률 ${pct}%</b> 가 나옵니다.`;
+  }
+
+  analyzeBtn.addEventListener('click', ()=>{
+    const text = input.value.trim();
+    if(!text){
+      input.focus();
+      input.placeholder = '먼저 메일 본문을 입력해주세요!';
+      return;
+    }
+    analyzeBtn.disabled = true;
+    analyzeBtn.textContent = '검역 중...';
+    setTimeout(()=>{
+      const result = predict(text);
+      render(result, text);
+      analyzeBtn.disabled = false;
+      analyzeBtn.textContent = '검역 시작 →';
+    }, 420);
+  });
+
+  input.addEventListener('input', ()=>{
+    if(readout.classList.contains('active')) resetReadout();
+  });
+})();
+</script>
+</body>
+</html>
